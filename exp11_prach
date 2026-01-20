@@ -1,0 +1,106 @@
+
+clc; clear; close all;
+
+%% PARAMETERS
+N_subcarriers = 72;       % total subcarriers (6 PRBs x 12 SC each)
+N_sym = 14;               % OFDM symbols per slot
+SC_per_PRB = 12;
+M = 4;                    % QPSK modulation
+k = log2(M);              % bits per symbol
+SNR_dB = 15;              % channel SNR
+
+%% --- Initialize Resource Grid ---
+grid = zeros(N_subcarriers, N_sym);        % 0=empty, 1=PRACH, 2=PUCCH, 3=PUSCH
+tx_grid_symbols = complex(zeros(N_subcarriers, N_sym));
+
+%% --- Map PRACH ---
+prach_prbs = 2:3;  
+prach_sc_start = (prach_prbs(1)-1)*SC_per_PRB+1;
+prach_sc_end   = prach_prbs(end)*SC_per_PRB;
+prach_syms = 1:4;
+grid(prach_sc_start:prach_sc_end, prach_syms) = 1;
+pr_len = length(prach_sc_start:prach_sc_end)*length(prach_syms);
+tx_grid_symbols(grid==1) = exp(1j*2*pi*rand(pr_len,1)); % PRACH pilots
+
+%% --- Map PUCCH ---
+pucch_syms = N_sym-1:N_sym; 
+pucch_prbs = [1,6]; 
+for prb = pucch_prbs
+    sc = (prb-1)*SC_per_PRB+1 : prb*SC_per_PRB;
+    grid(sc,pucch_syms) = 2;
+end
+pucch_len = sum(grid(:)==2);
+tx_grid_symbols(grid==2) = pskmod(randi([0 1], pucch_len,1),2); % BPSK ACK/NACK
+
+%% --- Map PUSCH (remaining symbols) ---
+grid(grid==0) = 3;  
+pusch_locs = find(grid==3);
+
+N_pusch = length(pusch_locs);                  
+tx_bits_pusch = randi([0 1], N_pusch*k,1); 
+
+bits_reshaped = reshape(tx_bits_pusch,k,[]).'; 
+symbols_idx = bits_reshaped(:,1)*2 + bits_reshaped(:,2); 
+tx_symbols_pusch = pskmod(symbols_idx, M, pi/4); 
+
+% Map to grid
+tx_grid_symbols(pusch_locs) = tx_symbols_pusch;
+
+%% --- Plot 1: Resource Allocation Grid ---
+figure('Name','Resource Allocation Grid','NumberTitle','off');
+imagesc(1:N_sym,1:N_subcarriers,grid);
+colormap([1 0 0; 0 0 1; 0 1 0]); caxis([1 3]);
+set(gca,'YDir','normal'); 
+xlabel('OFDM Symbols (time)'); ylabel('Subcarrier Index (frequency)');
+title('5G NR Uplink Resource Allocation (PRACH, PUCCH, PUSCH)');
+grid on; box on;
+
+% Legend
+hold on;
+h1 = plot(NaN,NaN,'s','MarkerFaceColor',[1 0 0],'MarkerEdgeColor','r'); % PRACH
+h2 = plot(NaN,NaN,'s','MarkerFaceColor',[0 0 1],'MarkerEdgeColor','b'); % PUCCH
+h3 = plot(NaN,NaN,'s','MarkerFaceColor',[0 1 0],'MarkerEdgeColor','g'); % PUSCH
+legend([h1 h2 h3], {'PRACH','PUCCH','PUSCH'}, 'Location','bestoutside');
+hold off;
+
+%% --- Plot 2: Transmitted Symbols ---
+figure('Name','Transmitted Symbols','NumberTitle','off');
+plot(tx_symbols_pusch,'bo'); grid on; axis square;
+title('UE Transmitted QPSK Symbols'); xlabel('In-Phase'); ylabel('Quadrature');
+
+%% --- Channel: AWGN ---
+rx_grid_symbols = awgn(tx_grid_symbols,SNR_dB,'measured');
+
+%% --- Plot 3: Received Signal Magnitude Grid ---
+figure('Name','Received Signal Magnitude Grid','NumberTitle','off');
+imagesc(1:N_sym,1:N_subcarriers,abs(rx_grid_symbols));
+set(gca,'YDir','normal'); colorbar;
+xlabel('OFDM Symbols (time)'); ylabel('Subcarrier Index (frequency)');
+title(['Received Signal Magnitude at gNB (SNR = ' num2str(SNR_dB) ' dB)']);
+grid on; box on;
+
+%% --- Receiver: Demodulate PUSCH ---
+rx_pusch_symbols = rx_grid_symbols(pusch_locs);
+rx_idx = pskdemod(rx_pusch_symbols, M, pi/4); 
+rx_bits_mat = de2bi(rx_idx, k, 'left-msb'); 
+rx_bits_pusch_rx = rx_bits_mat.'; 
+rx_bits_pusch_rx = rx_bits_pusch_rx(:);
+
+%% --- BER calculation ---
+numErr = sum(tx_bits_pusch ~= rx_bits_pusch_rx);
+BER = numErr/length(rx_bits_pusch_rx);
+fprintf('Bit Error Rate (BER) at %d dB SNR = %.4f\n',SNR_dB, BER);
+
+%% --- Plot 4: Constellations ---
+figure('Name','Constellations','NumberTitle','off');
+subplot(1,2,1);
+plot(tx_symbols_pusch(1:200),'bo'); grid on; axis square;
+title('Transmitted Constellation (QPSK)');
+xlabel('In-Phase'); ylabel('Quadrature');
+
+subplot(1,2,2);
+plot(rx_pusch_symbols(1:200),'ro'); grid on; axis square;
+title(['Received Constellation (SNR = ' num2str(SNR_dB) ' dB)']);
+xlabel('In-Phase'); ylabel('Quadrature');
+
+	
