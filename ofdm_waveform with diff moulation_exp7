@@ -1,0 +1,172 @@
+clc;
+clear;
+close all;
+
+%% Parameters
+numBits = 1e5;                        % Number of bits
+modSchemes = {'QPSK', '16QAM', '64QAM'}; % Modulation schemes
+M_vals = [4, 16, 64];                 % Modulation orders for QPSK, 16QAM, 64QAM
+numSNR = 40;                          % Number of SNR points
+SNR_dB = linspace(0, 40, numSNR);     % SNR range in dB
+numTrials = 100;                       % Monte Carlo trials
+
+% OFDM parameters
+N = 64;                               % Number of subcarriers (FFT size)
+CP_len = 16;                          % Cyclic prefix length
+numOFDMsymbols = floor(numBits ./ log2(M_vals(1)) / N); % Number of OFDM symbols
+
+BER = zeros(length(modSchemes), numSNR);
+
+% Store time-domain signals for comparison plot
+txSignalsIFFT = cell(1,length(modSchemes));
+txSignalsIFFT_CP = cell(1,length(modSchemes));
+
+for mIndex = 1:length(modSchemes)
+    M = M_vals(mIndex);             % Current modulation order
+    k = log2(M);                   % Bits per symbol
+    
+    % Generate data bits for current modulation
+    curNumBits = numOFDMsymbols * N * k;
+    
+    % Map constellation once for TX plots
+    data = randi([0 1], curNumBits, 1);
+    if M == 4
+        modSymbols = pskmod(bi2de(reshape(data, k, []).','left-msb'), M, pi/4);
+    else
+        modSymbols = qammod(bi2de(reshape(data, k, []).','left-msb'), M, 'gray');
+    end
+    
+    % Transmit Constellation Diagram (before IFFT)
+    figure;
+    scatterplot(modSymbols(1:5000));
+    title(['Transmit Constellation - ' modSchemes{mIndex}]);
+    grid on;
+    
+    % Reshape symbols into OFDM symbols
+    modSymbolsMatrix = reshape(modSymbols, N, []);
+    
+    % Perform IFFT (OFDM modulation)
+    txOFDM = ifft(modSymbolsMatrix, N, 1);
+    
+    % Save time-domain OFDM signal without CP (for plotting)
+    txSigIFFT = txOFDM(:);
+    txSignalsIFFT{mIndex} = txSigIFFT(1:5*N);
+    
+    % Add cyclic prefix
+    cyclicPrefix = txOFDM(end-CP_len+1:end, :);
+    txOFDM_CP = [cyclicPrefix; txOFDM];
+    
+    % Save time-domain OFDM signal with CP (for plotting)
+    txSigIFFT_CP = txOFDM_CP(:);
+    txSignalsIFFT_CP{mIndex} = txSigIFFT_CP(1:5*(N+CP_len));
+    
+    % ---------------- MONTE CARLO BER-SNR ---------------- %
+    for snrIdx = 1:numSNR
+        errCount = 0;
+        bitCount = 0;
+        
+        for trial = 1:numTrials
+            % New random bits for each trial
+            data = randi([0 1], curNumBits, 1);
+
+            % Modulate
+            if M == 4
+                modSymbols = pskmod(bi2de(reshape(data, k, []).','left-msb'), M, pi/4);
+            else
+                modSymbols = qammod(bi2de(reshape(data, k, []).','left-msb'), M, 'gray');
+            end
+            
+            % Reshape into OFDM symbols
+            modSymbolsMatrix = reshape(modSymbols, N, []);
+            
+            % IFFT
+            txOFDM = ifft(modSymbolsMatrix, N, 1);
+            
+            % Add cyclic prefix
+            cyclicPrefix = txOFDM(end-CP_len+1:end, :);
+            txOFDM_CP = [cyclicPrefix; txOFDM];
+            
+            % Serialize for transmission
+            txSignal = txOFDM_CP(:);
+            
+            % AWGN channel
+            rxSignal = awgn(txSignal, SNR_dB(snrIdx), 'measured');
+            
+            % Reshape to OFDM symbols with CP
+            rxOFDM_CP = reshape(rxSignal, N+CP_len, []);
+            
+            % Remove CP
+            rxOFDM = rxOFDM_CP(CP_len+1:end, :);
+            
+            % FFT
+            rxSymbolsMatrix = fft(rxOFDM, N, 1);
+            
+            % Serialize
+            rxSymbols = rxSymbolsMatrix(:);
+            
+            % Demodulate
+            if M == 4
+                rxDec = pskdemod(rxSymbols, M, pi/4);
+            else
+                rxDec = qamdemod(rxSymbols, M, 'gray');
+            end
+            
+            % Convert symbols to bits
+            rxBitsMat = de2bi(rxDec, k, 'left-msb').';
+            rxBits = rxBitsMat(:);
+            
+            % Count errors
+            errCount = errCount + sum(rxBits ~= data);
+            bitCount = bitCount + length(data);
+        end
+        
+        % Monte Carlo BER
+        BER(mIndex, snrIdx) = errCount / bitCount;
+    end
+    
+    % Received Constellation plot
+    figure;
+    validSymbols = rxSymbols(~isnan(rxSymbols) & ~isinf(rxSymbols));
+    scatterplot(validSymbols(1:min(5000,numel(validSymbols))));
+    title(['Received Constellation - ' modSchemes{mIndex} ' OFDM']);
+    grid on;
+end
+
+% BER vs SNR plot
+figure;
+semilogy(SNR_dB, BER(1,:), '-o', 'LineWidth', 2);
+hold on;
+semilogy(SNR_dB, BER(2,:), '-s', 'LineWidth', 2);
+semilogy(SNR_dB, BER(3,:), '-d', 'LineWidth', 2);
+grid on;
+xlabel('SNR (dB)');
+ylabel('Bit Error Rate (BER)');
+title('BER vs SNR for OFDM with Different Modulation Schemes (Monte Carlo)');
+legend(modSchemes, 'Location', 'southwest');
+axis([0 40 1e-5 1]);
+hold off;
+
+% Plot comparison of time-domain OFDM waveforms (with and without CP)
+figure;
+colors = ['b','r','k'];
+for i = 1:length(modSchemes)
+    subplot(3,1,i);
+    plot(real(txSignalsIFFT{i}), 'Color', colors(i), 'LineWidth', 1.5);
+    hold on;
+    plot(real(txSignalsIFFT_CP{i}), '--', 'Color', colors(i), 'LineWidth', 1.5);
+    hold off;
+    title([modSchemes{i} ': OFDM Time-Domain Waveforms']);
+    xlabel('Sample Index');
+    ylabel('Amplitude');
+    legend('Without CP','With CP');
+    grid on;
+end
+
+%% Command line output analysis:
+fprintf('\nAnalysis:\n');
+fprintf('Monte Carlo averaging over %d trials makes BER vs SNR smoother.\n', numTrials);
+fprintf('Higher-order modulations (16-QAM, 64-QAM) give higher data rates but need more SNR.\n');
+fprintf('QPSK is more robust at low SNR.\n');
+fprintf('OFDM with CP combats ISI effectively.\n');
+
+	
