@@ -1,0 +1,59 @@
+% Experiment 9: 5G Numerology and Frame Structure
+% Prerequisites: 5G Toolbox
+clear; close all; clc;
+
+% Numerologies to test (μ = 0 to 4)
+mu_values = 0:4;
+carrierFreq = 3.5e9; % Carrier frequency 3.5 GHz
+nRB = 52;            % Number of resource blocks (common for FR1)
+nAntennas = 1;
+
+for mu = mu_values
+    fprintf('\n--- Numerology µ = %d ---\n', mu);
+
+    % Subcarrier Spacing (SCS) in kHz
+    scs = 15 * 2^mu;          % in kHz
+    Tslot = 1e-3 / (2^mu);    % Slot duration in seconds
+    fprintf('Subcarrier Spacing: %d kHz\n', scs);
+    fprintf('Slot Duration: %.3f ms\n', Tslot*1e3);
+
+    % Carrier and grid configuration
+    carrier = nrCarrierConfig;
+    carrier.SubcarrierSpacing = scs;
+    carrier.NSizeGrid = nRB;
+    carrier.NSlot = 0;
+    carrier.NStartGrid = 0;
+
+    % Get OFDM info (for sample rate)
+    ofdmInfo = nrOFDMInfo(carrier);
+
+    % Create empty resource grid
+    grid = nrResourceGrid(carrier, nAntennas);
+    [K, L, R] = size(grid);
+
+    % Fill grid with dummy complex QPSK data (for visualization)
+    dataSym = qammod(randi([0 3], K*L,1), 4, 'UnitAveragePower', true);
+    grid(:,:,1) = reshape(dataSym, K, L);
+
+    % Time-domain signal generation
+    txWaveform = nrOFDMModulate(carrier, grid);
+
+    % --- Plot time-domain waveform ---
+    figure;
+    t = (0:length(txWaveform)-1)/ofdmInfo.SampleRate;
+    plot(t*1e3, abs(txWaveform),'b');
+    xlabel('Time (ms)');
+    ylabel('Amplitude');
+    grid on;
+    title(sprintf('Time-domain Signal | µ = %d, SCS = %d kHz', mu, scs));
+
+    % --- Plot resource grid magnitude ---
+    figure;
+    imagesc(0:L-1, 0:K-1, abs(grid(:,:,1)));
+    axis xy; colormap(jet); colorbar;
+    xlabel('OFDM Symbol Index');
+    ylabel('Subcarrier Index');
+    title(sprintf('Resource Grid Magnitude | µ = %d, SCS = %d kHz', mu, scs));
+end
+
+	
