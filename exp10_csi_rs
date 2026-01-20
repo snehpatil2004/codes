@@ -1,0 +1,199 @@
+
+clc; clear; close all;
+
+%% Parameters
+N_tx = 4;              
+N_rx = 1;              
+N_sc = 256;            
+SNR_demo = 10;         
+M = 4;                 
+SNR_dB_range = 0:5:30; 
+N_realizations = 50;  
+
+%% Generate CSI-RS pilot (QPSK)
+data_symbols = randi([0 M-1],1,N_sc);
+pilot = exp(1j*2*pi*data_symbols/M);  
+
+%% Rayleigh channel and noise
+H_demo = (randn(N_rx,N_tx,N_sc)+1j*randn(N_rx,N_tx,N_sc))/sqrt(2);
+noise_demo = (randn(N_rx,N_sc)+1j*randn(N_rx,N_sc))/sqrt(2)*10^(-SNR_demo/20);
+
+%% Received signal before beamforming
+rx_signal_demo = zeros(N_rx,N_sc);
+rx_signal_MRT_demo = zeros(N_rx,N_sc);
+rx_signal_EGT_demo = zeros(N_rx,N_sc);
+for sc=1:N_sc
+    tx_signal_demo = repmat(pilot,N_tx,1);
+    
+    % Received without beamforming
+    rx_signal_demo(:,sc) = H_demo(:,:,sc)*tx_signal_demo(:,sc) + noise_demo(:,sc);
+    
+    % MRT beamforming
+    w_mrt = H_demo(:,:,sc)'; w_mrt = w_mrt/norm(w_mrt);
+    rx_signal_MRT_demo(:,sc) = H_demo(:,:,sc)*w_mrt.*pilot(sc);
+    
+    % EGT beamforming
+    w_egt = exp(1j*angle(H_demo(:,:,sc)')); w_egt = w_egt/norm(w_egt);
+    rx_signal_EGT_demo(:,sc) = H_demo(:,:,sc)*w_egt.*pilot(sc);
+end
+
+%% Figures 1-6: Step-by-step signals
+
+% Figure 1: Original Transmitted Signal
+figure('Name','Figure 1: Transmitted Signal','NumberTitle','off');
+plot(real(pilot),'b'); hold on; plot(imag(pilot),'r');
+title('Original Transmitted CSI-RS Signal'); xlabel('Subcarrier'); ylabel('Amplitude');
+legend('Real','Imag'); grid on;
+
+% Figure 2: Noise
+figure('Name','Figure 2: Noise','NumberTitle','off');
+plot(real(noise_demo),'k'); hold on; plot(imag(noise_demo),'m');
+title('Noise Signal'); xlabel('Subcarrier'); ylabel('Amplitude');
+legend('Real','Imag'); grid on;
+
+% Figure 3: Received Signal (Tx + Noise)
+figure('Name','Figure 3: Received Signal','NumberTitle','off');
+plot(real(rx_signal_demo),'b'); hold on; plot(imag(rx_signal_demo),'r');
+title('Received Signal = Transmitted + Noise'); xlabel('Subcarrier'); ylabel('Amplitude');
+legend('Real','Imag'); grid on;
+
+% Figure 4: No Beamforming
+figure('Name','Figure 4: No Beamforming','NumberTitle','off');
+plot(real(rx_signal_demo),'b'); hold on; plot(imag(rx_signal_demo),'r');
+title('Received Signal Without Beamforming'); xlabel('Subcarrier'); ylabel('Amplitude');
+legend('Real','Imag'); grid on;
+
+% Figure 5: MRT Beamforming
+figure('Name','Figure 5: MRT Beamforming','NumberTitle','off');
+plot(real(rx_signal_MRT_demo),'b'); hold on; plot(imag(rx_signal_MRT_demo),'r');
+title('MRT Beamformed Signal'); xlabel('Subcarrier'); ylabel('Amplitude');
+legend('Real','Imag'); grid on;
+
+% Figure 6: EGT Beamforming
+figure('Name','Figure 6: EGT Beamforming','NumberTitle','off');
+plot(real(rx_signal_EGT_demo),'b'); hold on; plot(imag(rx_signal_EGT_demo),'r');
+title('EGT (Phase-only) Beamformed Signal'); xlabel('Subcarrier'); ylabel('Amplitude');
+legend('Real','Imag'); grid on;
+
+%% 7. Constellation Plots
+figure('Name','Constellations','NumberTitle','off');
+subplot(1,3,1);
+plot(pilot,'ko','MarkerFaceColor','k'); hold on;
+plot(rx_signal_demo,'ro'); title('Before Beamforming'); grid on; axis equal;
+xlabel('Re'); ylabel('Im'); legend('Ideal','Received');
+
+subplot(1,3,2);
+plot(pilot,'ko','MarkerFaceColor','k'); hold on;
+plot(rx_signal_MRT_demo,'bo'); title('MRT Beamformed'); grid on; axis equal;
+xlabel('Re'); ylabel('Im'); legend('Ideal','Received');
+
+subplot(1,3,3);
+plot(pilot,'ko','MarkerFaceColor','k'); hold on;
+plot(rx_signal_EGT_demo,'mo'); title('EGT Beamformed'); grid on; axis equal;
+xlabel('Re'); ylabel('Im'); legend('Ideal','Received');
+
+%% 8. SER vs SNR
+% Initialize SER arrays
+SER_before = zeros(size(SNR_dB_range));
+SER_MRT = zeros(size(SNR_dB_range));
+SER_EGT = zeros(size(SNR_dB_range));
+
+for idx_snr = 1:length(SNR_dB_range)
+    SNR_dB = SNR_dB_range(idx_snr);
+    errors_before = 0; errors_MRT = 0; errors_EGT = 0;
+    
+    for r = 1:N_realizations
+        tx_signal = repmat(pilot,N_tx,1);
+        H = (randn(N_rx,N_tx,N_sc)+1j*randn(N_rx,N_tx,N_sc))/sqrt(2);
+        noise = (randn(N_rx,N_sc)+1j*randn(N_rx,N_sc))/sqrt(2)*10^(-SNR_dB/20);
+        
+        rx_signal = zeros(N_rx,N_sc); rx_signal_MRT = zeros(N_rx,N_sc); rx_signal_EGT = zeros(N_rx,N_sc);
+        for sc = 1:N_sc
+            rx_signal(:,sc) = H(:,:,sc)*tx_signal(:,sc) + noise(:,sc);
+            w_mrt = H(:,:,sc)'; w_mrt = w_mrt/norm(w_mrt);
+            rx_signal_MRT(:,sc) = H(:,:,sc)*w_mrt.*pilot(sc);
+            w_egt = exp(1j*angle(H(:,:,sc)')); w_egt = w_egt/norm(w_egt);
+            rx_signal_EGT(:,sc) = H(:,:,sc)*w_egt.*pilot(sc);
+        end
+        
+        detected_before = pskdemod(rx_signal,M,0);
+        detected_MRT = pskdemod(rx_signal_MRT,M,0);
+        detected_EGT = pskdemod(rx_signal_EGT,M,0);
+        
+        errors_before = errors_before + sum(detected_before ~= data_symbols);
+        errors_MRT = errors_MRT + sum(detected_MRT ~= data_symbols);
+        errors_EGT = errors_EGT + sum(detected_EGT ~= data_symbols);
+    end
+    
+    SER_before(idx_snr) = errors_before/(N_sc*N_realizations);
+    SER_MRT(idx_snr) = errors_MRT/(N_sc*N_realizations);
+    SER_EGT(idx_snr) = errors_EGT/(N_sc*N_realizations);
+end
+
+figure('Name','SER vs SNR','NumberTitle','off');
+semilogy(SNR_dB_range,SER_before,'r-o','LineWidth',1.5); hold on;
+semilogy(SNR_dB_range,SER_MRT,'b-s','LineWidth',1.5);
+semilogy(SNR_dB_range,SER_EGT,'m-d','LineWidth',1.5);
+grid on; xlabel('SNR (dB)'); ylabel('Symbol Error Rate (SER)');
+title('SER vs SNR with CSI-RS-based Beamforming');
+legend('Before BF','MRT','EGT');
+
+
+%% Monte Carlo averaging for SNR comparison
+N_iter = 1000;
+SNR_noBF_total = 0;
+SNR_MRT_total = 0;
+SNR_EGT_total = 0;
+
+for iter = 1:N_iter
+    % Random Rayleigh channel
+    H = (randn(N_rx,N_tx,N_sc)+1j*randn(N_rx,N_tx,N_sc))/sqrt(2);
+    noise = (randn(N_rx,N_sc)+1j*randn(N_rx,N_sc))/sqrt(2)*10^(-SNR_demo/20);
+    % Total transmit power fixed
+    tx_signal = repmat(pilot/sqrt(N_tx), N_tx, 1);  % divide by sqrt(N_tx)
+
+    % Noise-free received signals
+    rx_signal_nf = zeros(N_rx,N_sc); 
+    rx_signal_MRT_nf = zeros(N_rx,N_sc); 
+    rx_signal_EGT_nf = zeros(N_rx,N_sc);
+
+    for sc = 1:N_sc
+        % No Beamforming (sum of channels without noise)
+        rx_signal_nf(:,sc) = H(:,:,sc)*tx_signal(:,sc);
+
+        % MRT Beamforming
+        w_mrt = H(:,:,sc)'; w_mrt = w_mrt/norm(w_mrt);
+        rx_signal_MRT_nf(:,sc) = H(:,:,sc)*w_mrt.*pilot(sc);
+
+        % EGT Beamforming
+        w_egt = exp(1j*angle(H(:,:,sc)')); w_egt = w_egt/norm(w_egt);
+        rx_signal_EGT_nf(:,sc) = H(:,:,sc)*w_egt.*pilot(sc);
+    end
+
+    % Compute SNR per iteration
+    SNR_noBF_total = SNR_noBF_total + mean(abs(rx_signal_nf).^2)/mean(abs(noise).^2);
+    SNR_MRT_total = SNR_MRT_total + mean(abs(rx_signal_MRT_nf).^2)/mean(abs(noise).^2);
+    SNR_EGT_total = SNR_EGT_total + mean(abs(rx_signal_EGT_nf).^2)/mean(abs(noise).^2);
+end
+
+% Average over iterations and convert to dB
+SNR_noBF_dB = 10*log10(SNR_noBF_total/N_iter);
+SNR_MRT_dB = 10*log10(SNR_MRT_total/N_iter);
+SNR_EGT_dB = 10*log10(SNR_EGT_total/N_iter);
+
+
+% Display in command line
+fprintf('\nAverage SNRs (Monte Carlo, %d iterations):\n', N_iter);
+fprintf('MRT Beamforming: %.2f dB\n', SNR_MRT_dB);
+fprintf('EGT Beamforming: %.2f dB\n', SNR_EGT_dB);
+fprintf('No Beamforming: %.2f dB\n', SNR_noBF_dB);
+
+% Bar graph in correct order MRT > EGT > No BF
+figure('Name','Average SNR Comparison','NumberTitle','off');
+bar([SNR_MRT_dB SNR_EGT_dB SNR_noBF_dB],'FaceColor',[0.2 0.6 0.8]);
+set(gca,'XTickLabel',{'MRT','EGT','No BF'});
+ylabel('SNR (dB)');
+title('Average SNR Comparison (Monte Carlo)');
+grid on;
+
+	
